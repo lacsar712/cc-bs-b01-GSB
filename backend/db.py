@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS strain_readings (
     processed_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS idx_strain_readings_status ON strain_readings (status, id);
+CREATE INDEX IF NOT EXISTS idx_strain_readings_span_done ON strain_readings (span_code, status, id);
 """
 
 

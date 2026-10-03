@@ -7,6 +7,15 @@ from sanic import Sanic
 from sanic.response import json as sanic_json
 
 from db import create_pool, ensure_schema, seed_if_empty
+from trend import (
+    DEFAULT_WINDOW,
+    WINDOW_OPTIONS,
+    caliber_text,
+    fit_slope,
+    normalize_window,
+    round_slope,
+    summarize_spans,
+)
 
 SECRET = os.environ.get("JWT_SECRET", "bridge-strain-dev-secret")
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -170,4 +179,110 @@ async def create_reading(request):
             "message": "已入队，后台工人将认领并判定",
         },
         status=201,
+    )
+
+
+# 每跨最近 N 条办结(done)读数；未办结(pending/processing)一律不入窗。
+_WINDOWED_DONE_SQL = """
+SELECT span_code, id, microstrain, verdict, processed_at
+FROM (
+    SELECT span_code, id, microstrain, verdict, processed_at,
+           ROW_NUMBER() OVER (PARTITION BY span_code ORDER BY id DESC) AS rn
+    FROM strain_readings
+    WHERE status = 'done'
+) t
+WHERE rn <= %s
+ORDER BY span_code, id
+"""
+
+_WINDOWED_DONE_BY_SPAN_SQL = """
+SELECT span_code, id, microstrain, verdict, processed_at
+FROM (
+    SELECT span_code, id, microstrain, verdict, processed_at,
+           ROW_NUMBER() OVER (PARTITION BY span_code ORDER BY id DESC) AS rn
+    FROM strain_readings
+    WHERE status = 'done' AND span_code = %s
+) t
+WHERE rn <= %s
+ORDER BY id
+"""
+
+
+def _trend_context(request):
+    """登录 + 窗宽 + 角色口径。测量员可调窗，复核员只能看默认窗宽。"""
+    user = _require_user(request)
+    if not user:
+        return None, None, sanic_json({"detail": "未登录"}, status=401)
+    window = normalize_window(request.args.get("window"))
+    if window is None:
+        opts = "/".join(str(w) for w in WINDOW_OPTIONS)
+        return None, None, sanic_json(
+            {"detail": f"窗宽仅支持 {opts}"}, status=400
+        )
+    if user["role"] != "writer" and window != DEFAULT_WINDOW:
+        return None, None, sanic_json(
+            {"detail": "复核员仅可查看默认窗宽，不可调窗"}, status=403
+        )
+    return user, window, None
+
+
+@app.get("/api/trend/slopes")
+async def trend_slopes(request):
+    """趋势专页汇总：各跨段在最近窗宽内的服务端拟合斜率与点数。"""
+    user, window, err = _trend_context(request)
+    if err:
+        return err
+    pool = request.app.ctx.pool
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(_WINDOWED_DONE_SQL, (window,))
+            rows = await cur.fetchall()
+    return sanic_json(
+        {
+            "window": window,
+            "window_options": list(WINDOW_OPTIONS),
+            "default_window": DEFAULT_WINDOW,
+            "can_adjust_window": user["role"] == "writer",
+            "fit": "server-least-squares",
+            "caliber": caliber_text(window),
+            "spans": summarize_spans(rows),
+        }
+    )
+
+
+@app.get("/api/trend/points")
+async def trend_points(request):
+    """按窗重查明细：返回窗内逐条办结点及同一口径拟合的斜率，供逐条对账。"""
+    user, window, err = _trend_context(request)
+    if err:
+        return err
+    span_code = str(request.args.get("span_code", "")).strip()
+    if not span_code:
+        return sanic_json({"detail": "缺少 span_code"}, status=400)
+    pool = request.app.ctx.pool
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(_WINDOWED_DONE_BY_SPAN_SQL, (span_code, window))
+            rows = await cur.fetchall()
+    values = [float(r["microstrain"]) for r in rows]
+    points = [
+        {
+            "seq": seq,
+            "id": r["id"],
+            "microstrain": r["microstrain"],
+            "verdict": r["verdict"],
+            "processed_at": _iso(r["processed_at"]),
+        }
+        for seq, r in enumerate(rows)
+    ]
+    return sanic_json(
+        {
+            "span_code": span_code,
+            "window": window,
+            "point_count": len(points),
+            "slope": round_slope(fit_slope(values)),
+            "fit": "server-least-squares",
+            "caliber": caliber_text(window),
+            "points": points,
+        }
     )

@@ -129,3 +129,77 @@ th {
   background: #fff8e1;
   color: #f57f17;
 }
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+button.navbtn {
+  background: #eceff1;
+  color: #1a1a1a;
+}
+
+button.navbtn.active {
+  background: #1565c0;
+  color: #fff;
+}
+
+select {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+  min-width: 140px;
+  background: #fff;
+}
+
+select:disabled {
+  background: #eceff1;
+  color: #555;
+}
+
+.trend-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.trend-foot {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.trend-foot .caliber {
+  margin: 0;
+  flex: 1;
+  min-width: 260px;
+}
+
+.hint {
+  color: #777;
+  font-size: 0.85rem;
+}
+
+.slope-pos {
+  color: #c62828;
+  font-weight: 600;
+}
+
+.slope-neg {
+  color: #1565c0;
+  font-weight: 600;
+}
+
+.slope-flat {
+  color: #555;
+}
+
+tr.detail-row td {
+  background: #f7f9fa;
+}
