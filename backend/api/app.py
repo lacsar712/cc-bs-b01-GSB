@@ -171,3 +171,171 @@ async def create_reading(request):
         },
         status=201,
     )
+
+
+# ---------- 趋势斜率专页 ----------
+#
+# 口径：斜率一律由服务端按「已办结」读数拟合，页面只展示结果。
+# 窗口 = 每跨按办结时间倒序取最近 N 条；窗内按办结先后编号 1..n，
+# 对微应变做最小二乘拟合（regr_slope），斜率单位 με/点；不足 2 条不出斜率。
+
+DEFAULT_WINDOW = 10
+ALLOWED_WINDOWS = (2, 5, 10, 20, 50)
+
+# 列表与明细共用同一段窗口 CTE，保证两处斜率逐条对得上。
+WINDOW_CTE = """
+WITH ranked AS (
+    SELECT id, span_code, microstrain, verdict, processed_at,
+           ROW_NUMBER() OVER (
+               PARTITION BY span_code
+               ORDER BY processed_at DESC, id DESC
+           ) AS rn
+    FROM strain_readings
+    WHERE status = 'done'
+),
+win AS (
+    SELECT id, span_code, microstrain, verdict, processed_at,
+           ROW_NUMBER() OVER (
+               PARTITION BY span_code
+               ORDER BY rn DESC
+           ) AS seq
+    FROM ranked
+    WHERE rn <= %(window)s
+)
+"""
+
+CALIBER_TEMPLATE = (
+    "口径：仅统计状态为「已办结」的读数，待处理/处理中不计入拟合；"
+    "按办结时间倒序取每跨最近 {window} 条作为窗口；"
+    "窗内按办结先后编号 1..n，对微应变做最小二乘拟合，斜率单位 με/点；"
+    "窗内不足 2 条时不出斜率（空）。"
+    "斜率由服务端拟合，页面只展示，不自行计算。"
+)
+
+
+def _parse_window(request, user):
+    """解析窗宽参数。返回 (window, error_response)；无误时 error_response 为 None。
+
+    测量员可调窗；复核员只看，仅允许默认窗宽。
+    """
+    raw = request.args.get("window")
+    if raw in (None, ""):
+        return DEFAULT_WINDOW, None
+    try:
+        window = int(str(raw).strip())
+    except ValueError:
+        return None, sanic_json({"detail": "窗宽必须是整数"}, status=400)
+    if window not in ALLOWED_WINDOWS:
+        allowed = "/".join(str(w) for w in ALLOWED_WINDOWS)
+        return None, sanic_json({"detail": f"窗宽仅支持 {allowed}"}, status=400)
+    if user["role"] != "writer" and window != DEFAULT_WINDOW:
+        return None, sanic_json(
+            {"detail": "复核员仅可查看默认窗宽，不可调窗"}, status=403
+        )
+    return window, None
+
+
+@app.get("/api/trends/slopes")
+async def trend_slopes(request):
+    user = _require_user(request)
+    if not user:
+        return sanic_json({"detail": "未登录"}, status=401)
+    window, err = _parse_window(request, user)
+    if err:
+        return err
+
+    pool = request.app.ctx.pool
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                WINDOW_CTE
+                + """
+                SELECT span_code,
+                       COUNT(*) AS points,
+                       CASE WHEN COUNT(*) >= 2
+                           THEN ROUND(regr_slope(microstrain, seq)::numeric, 4)::float
+                       END AS slope,
+                       MIN(processed_at) AS first_processed_at,
+                       MAX(processed_at) AS last_processed_at
+                FROM win
+                GROUP BY span_code
+                ORDER BY span_code
+                """,
+                {"window": window},
+            )
+            rows = await cur.fetchall()
+
+    spans = [
+        {
+            "span_code": r["span_code"],
+            "points": r["points"],
+            "slope": r["slope"],
+            "first_processed_at": _iso(r["first_processed_at"]),
+            "last_processed_at": _iso(r["last_processed_at"]),
+        }
+        for r in rows
+    ]
+    return sanic_json(
+        {
+            "window": window,
+            "default_window": DEFAULT_WINDOW,
+            "allowed_windows": list(ALLOWED_WINDOWS),
+            "editable": user["role"] == "writer",
+            "caliber": CALIBER_TEMPLATE.format(window=window),
+            "spans": spans,
+        }
+    )
+
+
+@app.get("/api/trends/detail")
+async def trend_detail(request):
+    user = _require_user(request)
+    if not user:
+        return sanic_json({"detail": "未登录"}, status=401)
+    window, err = _parse_window(request, user)
+    if err:
+        return err
+    span_code = str(request.args.get("span_code", "")).strip()
+    if not span_code:
+        return sanic_json({"detail": "缺少跨段编号 span_code"}, status=400)
+
+    pool = request.app.ctx.pool
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                WINDOW_CTE
+                + """
+                SELECT seq, id, microstrain, verdict, processed_at,
+                       COUNT(*) OVER () AS points,
+                       CASE WHEN COUNT(*) OVER () >= 2
+                           THEN ROUND((regr_slope(microstrain, seq) OVER ())::numeric, 4)::float
+                       END AS slope
+                FROM win
+                WHERE span_code = %(span)s
+                ORDER BY seq
+                """,
+                {"window": window, "span": span_code},
+            )
+            rows = await cur.fetchall()
+
+    points = rows[0]["points"] if rows else 0
+    slope = rows[0]["slope"] if rows else None
+    return sanic_json(
+        {
+            "span_code": span_code,
+            "window": window,
+            "points": points,
+            "slope": slope,
+            "caliber": CALIBER_TEMPLATE.format(window=window),
+            "rows": [
+                {
+                    "seq": r["seq"],
+                    "id": r["id"],
+                    "microstrain": r["microstrain"],
+                    "verdict": r["verdict"],
+                    "processed_at": _iso(r["processed_at"]),
+                }
+                for r in rows
+            ],
+        }
+    )

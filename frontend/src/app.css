@@ -129,3 +129,115 @@ th {
   background: #fff8e1;
   color: #f57f17;
 }
+
+/* 顶栏导航 */
+.nav {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.navbtn {
+  background: #eceff1;
+  color: #1a1a1a;
+}
+
+.navbtn.active {
+  background: #1565c0;
+  color: #fff;
+}
+
+select {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+  min-width: 140px;
+  background: #fff;
+}
+
+select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.hint {
+  color: #777;
+  font-size: 0.85rem;
+  align-self: flex-end;
+  padding-bottom: 0.5rem;
+}
+
+/* 趋势斜率专页 */
+.spanrow {
+  cursor: pointer;
+}
+
+.spanrow:hover {
+  background: #f5f7fa;
+}
+
+.spanrow.open {
+  background: #e3f2fd;
+}
+
+.trendtag {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.trendtag.up {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.trendtag.down {
+  background: #f3e5f5;
+  color: #6a1b9a;
+}
+
+.trendtag.flat {
+  background: #eceff1;
+  color: #546e7a;
+}
+
+.trendtag.none {
+  background: #fff8e1;
+  color: #f57f17;
+}
+
+.detailbox {
+  margin-top: 1rem;
+  border: 1px dashed #90a4ae;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  background: #fafcfd;
+}
+
+.detailhead {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.detailhead button {
+  margin-left: auto;
+  padding: 0.3rem 0.8rem;
+}
+
+.trend-foot {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-top: 0.75rem;
+}
+
+.caliber {
+  color: #666;
+  font-size: 0.82rem;
+  margin: 0.35rem 0 0;
+  line-height: 1.5;
+}
